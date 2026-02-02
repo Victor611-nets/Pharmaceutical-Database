@@ -1,0 +1,174 @@
+DATABASE STRUCTURE
+
+CREATE TABLE patients(
+  patient_id SERIAL PRIMARY KEY,
+  full_name VARCHAR(100) NOT NULL,
+  phone VARCHAR(20),
+  gender VARCHAR(10),
+  date_of_birth DATE
+);
+
+CREATE TABLE suppliers(
+  supplier_id SERIAL PRIMARY KEY,
+  supplier_name VARCHAR(100) NOT NULL,
+  phone VARCHAR(20)
+);
+
+CREATE TABLE medicines(
+  medicine_id SERIAL PRIMARY KEY,
+  medicine_name VARCHAR(100) NOT NULL,
+  category VARCHAR(50),
+  unit_price DECIMAL(10,2),
+  quantity_in_stock INT,
+  expiry_date DATE,
+  supplier_id INT REFERENCES suppliers(supplier_id)
+);
+
+CREATE TABLE prescriptions (
+    prescription_id SERIAL PRIMARY KEY,
+    patient_id INT REFERENCES patients(patient_id),
+    prescription_date DATE
+);
+
+CREATE TABLE prescription_items (
+    item_id SERIAL PRIMARY KEY,
+    prescription_id INT REFERENCES prescriptions(prescription_id),
+    medicine_id INT REFERENCES medicines(medicine_id),
+    quantity INT
+);
+
+CREATE TABLE sales (
+    sale_id SERIAL PRIMARY KEY,
+    prescription_id INT REFERENCES prescriptions(prescription_id),
+    total_amount DECIMAL(10,2),
+    sale_date DATE
+);
+
+INSERT INTO patients (full_name, phone, gender, date_of_birth)
+VALUES
+('Mary Okoye', '08012345678', 'Female', '1995-04-12'),
+('Ibrahim Musa', '08098765432', 'Male', '1988-09-22');
+
+INSERT INTO suppliers (supplier_name, phone)
+VALUES
+('Emzor Pharmaceuticals', '08055555555'),
+('Fidson Healthcare', '08066666666');
+
+INSERT INTO medicines 
+(medicine_name, category, unit_price, quantity_in_stock, expiry_date, supplier_id)
+VALUES
+('Paracetamol 500mg', 'Analgesic', 50.00, 200, '2026-06-30', 1),
+('Amoxicillin 500mg', 'Antibiotic', 120.00, 80, '2025-11-15', 2);
+
+INSERT INTO prescriptions 
+(patient_id, prescription_date)
+VALUES
+(1, '2026-01-20'),
+(2, '2026-01-22');
+
+INSERT INTO prescription_items 
+(prescription_id, medicine_id, quantity)
+VALUES
+(1, 1, 10),   -- 10 Paracetamol
+(2, 2, 14);   -- 14 Amoxicillin
+
+INSERT INTO sales 
+(prescription_id, total_amount, sale_date)
+VALUES
+(1, 500.00, '2026-01-20'),
+(2, 1680.00, '2026-01-22');
+
+~~List all medicines with supplier name
+SELECT m.medicine_name, s.supplier_name
+FROM medicines m
+JOIN suppliers s ON m.supplier_id = s.supplier_id;
+
+~~Medicines expiring soon
+  SELECT medicine_name, expiry_date
+FROM medicines
+WHERE expiry_date < CURRENT_DATE + INTERVAL '90 days';
+
+~~Total sales per patient
+   Select p.patient_id, p.full_name as patient, SUM(s.total_amount)
+ from patients p join sales s ON 
+
+~~Total sales per patient
+   SELECT p.full_name, SUM(s.total_amount) AS total_spent
+FROM patients p
+JOIN prescriptions pr ON p.patient_id = pr.patient_id
+JOIN sales s ON pr.prescription_id = s.prescription_id
+GROUP BY p.full_name;
+
+~~Low stock alert
+ SELECT medicine_name, quantity_in_stock
+FROM medicines
+WHERE quantity_in_stock < 10;
+
+   TRIGGERS
+
+~~ Auto-calculate Sales Total (Trigger)
+    CREATE OR REPLACE FUNCTION calculate_sales_total()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.total_amount := (
+        SELECT SUM(pi.quantity * m.unit_price)
+        FROM prescription_items pi
+        JOIN medicines m ON pi.medicine_id = m.medicine_id
+        WHERE pi.prescription_id = NEW.prescription_id
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+	CREATE TRIGGER trg_calculate_sales_total
+BEFORE INSERT ON sales
+FOR EACH ROW
+EXECUTE FUNCTION calculate_sales_total();
+
+~~Auto-Reduce Stock After Prescription (Trigger)
+    CREATE OR REPLACE FUNCTION reduce_stock_after_prescription()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE medicines
+    SET quantity_in_stock = quantity_in_stock - NEW.quantity
+    WHERE medicine_id = NEW.medicine_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+	CREATE TRIGGER trg_reduce_stock
+AFTER INSERT ON prescription_items
+FOR EACH ROW
+EXECUTE FUNCTION reduce_stock_after_prescription();
+
+      Pharmacy Summary Views
+
+~~View 1: Current Stock Summary
+    CREATE VIEW vw_stock_summary AS
+SELECT
+    medicine_name,
+    quantity_in_stock,
+    unit_price,
+    (quantity_in_stock * unit_price) AS stock_value
+FROM medicines;
+
+~~View 2: Daily Sales Summary
+    CREATE VIEW vw_daily_sales AS
+SELECT
+    sale_date,
+    SUM(total_amount) AS total_sales
+FROM sales
+GROUP BY sale_date;
+
+View 3: Patient Purchase History
+	CREATE VIEW vw_patient_sales AS
+SELECT
+    p.full_name,
+    s.sale_date,
+    s.total_amount
+FROM patients p
+JOIN prescriptions pr ON p.patient_id = pr.patient_id
+JOIN sales s ON pr.prescription_id = s.prescription_id;
+
+SELECT * FROM vw_daily_sales;
